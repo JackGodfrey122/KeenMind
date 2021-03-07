@@ -429,4 +429,4 @@ if __name__ == "__main__":
     test = torch.rand(2, 3, img_size, img_size)
     label = torch.tensor([[0.000, 6.000, 0.546, 0.654, 0.123, 0.111], [0.000, 6.000, 0.546, 0.654, 0.123, 0.111]])
     yolo = YoloNetV3(num_classes, img_size)
-    out1, out2, out3 = yolo(test)
+    out1, out2, out3 = yolo(test, label)
