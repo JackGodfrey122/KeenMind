@@ -13,4 +13,4 @@ Keenmind is split into two ML components:
 
 1. Object Detection: The first model is used to isolate the dice types and locations. This uses the YoloV3 architecture trained on a custom dataset (this dataset will be published elsewhere at a later date).
 
-2. Digit Classification: This is the hello world of the deep learning computer vision, usually using the MNIST dataset. Therefore, it is possible to utilise transfer learning here, although the data distrubution is so simple, the gains from this may be negligble.
+2. Digit Classification: This is the hello world of the deep learning computer vision, usually using the MNIST dataset. Therefore, it is possible to utilise transfer learning here, although the data distribution is so simple, the gains from this may be negligible.
