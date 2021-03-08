@@ -508,7 +508,6 @@ class YoloNetV3(nn.Module):
     def forward(self, x, targets=None):
         tmp1, tmp2, tmp3 = self.darknet(x)
         out1, out2, out3 = self.yolo_tail(tmp1, tmp2, tmp3, targets)
-        # out = torch.cat((out1, out2, out3), 1)
         return out1, out2, out3
 
 if __name__ == "__main__":
