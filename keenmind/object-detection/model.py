@@ -498,12 +498,10 @@ class YoloNeck(nn.Module):
 
 class YoloNetV3(nn.Module):
 
-    def __init__(self, nC, img_size, nms=False, post=True):
+    def __init__(self, nC, img_size):
         super().__init__()
         self.darknet = FeatureExtractor()
         self.yolo_tail = YoloNeck(nC, img_size)
-        self.nms = nms
-        self._post_process = post
 
     def forward(self, x, targets=None):
         tmp1, tmp2, tmp3 = self.darknet(x)
