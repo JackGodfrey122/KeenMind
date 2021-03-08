@@ -175,74 +175,88 @@ class FeatureExtractor(nn.Module):
 
 
 class YoloLayer(nn.Module):
-    """Detection layer"""
+    """
+    The layer responsible for outputting the predictions.
 
-    def __init__(self, anchors, num_classes, img_size):
+    Code here is heavily inspired by the following repo:
+        
+        https://github.com/eriklindernoren/PyTorch-YOLOv3
+
+    This layer is complex, and is best viewed alongside utils.build_targets 
+    in order to interpret the output of the forward method.
+
+    Note on dimension sizes:
+        - nB: Batch size
+        - nA: Anchors per scale (3 throughout this implementation)
+        - nG: Grid size (usually 13, 26 and 52 for the 3 yolo layers)
+        - nC: Number of classes in the dataset
+
+    Parameters
+    ----------
+    anchors: (list) List of tuples representing anchors. Each tuple will
+        contain 2 ints, representing the width and height of the anchor box
+        respectively. Example: [(10, 13), (16, 30), (33, 23)]
+    nC: (int) Number of the classes in the dataset
+    img_size: (int) Width and height (in pixels) of the input image. This
+        network assumes square images.
+    """
+    def __init__(self, anchors, nC, img_size):
         super().__init__()
         self.anchors = anchors
-        self.num_anchors = len(anchors)
-        self.num_classes = num_classes
-        self.ignore_thres = 0.5
-        self.mse_loss = nn.MSELoss()
-        self.bce_loss = nn.BCELoss()
-        self.obj_scale = 1
-        self.noobj_scale = 100
-        self.metrics = {}
+        self.nA = len(anchors)
+        self.nC = nC
         self.img_size = img_size
-        self.grid_size = 0  # grid size
+        self.ignore_thres = 0.5  # IoU threshold 
+        self.nG = 0  # grid size
 
-    def compute_grid_offsets(self, grid_size, cuda=True):
-        self.grid_size = grid_size
-        g = self.grid_size
-        FloatTensor = torch.cuda.FloatTensor if cuda else torch.FloatTensor
-        self.stride = self.img_size / self.grid_size
+    def compute_grid_offsets(self, nG, cuda=True):
+        self.nG = nG
+        g = self.nG
+        self.stride = self.img_size / self.nG
+        
         # Calculate offsets for each grid
-        self.grid_x = torch.arange(g).repeat(g, 1).view([1, 1, g, g]).type(FloatTensor)
-        self.grid_y = torch.arange(g).repeat(g, 1).t().view([1, 1, g, g]).type(FloatTensor)
+        self.grid_x = torch.arange(g).repeat(g, 1).view([1, 1, g, g]).type(torch.FloatTensor)
+        self.grid_y = torch.arange(g).repeat(g, 1).t().view([1, 1, g, g]).type(torch.FloatTensor)
         self.scaled_anchors = FloatTensor([(a_w / self.stride, a_h / self.stride) for a_w, a_h in self.anchors])
-        self.anchor_w = self.scaled_anchors[:, 0:1].view((1, self.num_anchors, 1, 1))
-        self.anchor_h = self.scaled_anchors[:, 1:2].view((1, self.num_anchors, 1, 1))
+        self.anchor_w = self.scaled_anchors[:, 0:1].view((1, self.nA, 1, 1))
+        self.anchor_h = self.scaled_anchors[:, 1:2].view((1, self.nA, 1, 1))
 
     def forward(self, x, targets=None, img_size=None):
 
-        # Tensors for cuda support
-        FloatTensor = torch.cuda.FloatTensor if x.is_cuda else torch.FloatTensor
-        LongTensor = torch.cuda.LongTensor if x.is_cuda else torch.LongTensor
-
         self.img_size = img_size
-        num_samples = x.size(0)
-        grid_size = x.size(2)
+        nB = x.size(0)  # batch size
+        nG = x.size(2)  # size of scaled grid
 
-        prediction = (
-            x.view(num_samples, self.num_anchors, self.num_classes + 5, grid_size, grid_size)
+        # reshape raw input to match that of the expected output
+        prediction = (x.view(nB, self.nA, self.nC + 5, nG, nG)
             .permute(0, 1, 3, 4, 2)
             .contiguous()
         )
 
-        # Get outputs
-        x = torch.sigmoid(prediction[..., 0])  # Center x
-        y = torch.sigmoid(prediction[..., 1])  # Center y
-        w = prediction[..., 2]  # Width
-        h = prediction[..., 3]  # Height
-        pred_conf = torch.sigmoid(prediction[..., 4])  # Conf
-        pred_cls = torch.sigmoid(prediction[..., 5:])  # Cls pred.
+        # Unpack predictables from reshaped input and apply sigmoid to needed outputs
+        x = torch.sigmoid(prediction[..., 0])          # (nB, nA, nG, nG)
+        y = torch.sigmoid(prediction[..., 1])          # (nB, nA, nG, nG)
+        w = prediction[..., 2]                         # (nB, nA, nG, nG)
+        h = prediction[..., 3]                         # (nB, nA, nG, nG)
+        pred_conf = torch.sigmoid(prediction[..., 4])  # (nB, nA, nG, nG)
+        pred_cls = torch.sigmoid(prediction[..., 5:])  # (nB, nA, nG, nG, nC)
 
         # If grid size does not match current we compute new offsets
-        if grid_size != self.grid_size:
-            self.compute_grid_offsets(grid_size, cuda=x.is_cuda)
+        if nG != self.nG:
+            self.compute_grid_offsets(nG, cuda=x.is_cuda)
 
-        # Add offset and scale with anchors
-        pred_boxes = FloatTensor(prediction[..., :4].shape)
-        pred_boxes[..., 0] = x.data + self.grid_x
-        pred_boxes[..., 1] = y.data + self.grid_y
-        pred_boxes[..., 2] = torch.exp(w.data) * self.anchor_w
-        pred_boxes[..., 3] = torch.exp(h.data) * self.anchor_h
+        # Add offset to x and y, and scale w and h
+        pred_boxes = torch.FloatTensor(prediction[..., :4].shape)
+        pred_boxes[..., 0] = x.data + self.grid_x                 # x
+        pred_boxes[..., 1] = y.data + self.grid_y                 # y
+        pred_boxes[..., 2] = torch.exp(w.data) * self.anchor_w    # w
+        pred_boxes[..., 3] = torch.exp(h.data) * self.anchor_h    # h
 
         output = torch.cat(
             (
-                pred_boxes.view(num_samples, -1, 4) * self.stride,
-                pred_conf.view(num_samples, -1, 1),
-                pred_cls.view(num_samples, -1, self.num_classes),
+                pred_boxes.view(nB, -1, 4) * self.stride,
+                pred_conf.view(nB, -1, 1),
+                pred_cls.view(nB, -1, self.nC),
             ),
             -1,
         )
@@ -259,9 +273,12 @@ class PredictionNetwork(nn.Module):
     """
     This network is responsible for making the final predictions.
 
-    Whilst it does only explicitly return a single output, note the
-    self.branch attribute stemming from the 5th convolutional layer. This
-    is later utilized in the YoloNeck module.
+    It contains various convolutional layers and a final yolo layer. This
+    layer outputs the following:
+        branch: A tensor which will be fed into the next PredictionNetwork
+        yolo_output: A tensor containing the predictions from this scale
+        processed_targets: A tensor containing the processed tensors. This and
+            the yolo outputs will be fed into the loss function.
 
     The passage below is taken from the original paper (https://arxiv.org/pdf/1804.02767.pdf):
 
@@ -276,15 +293,24 @@ class PredictionNetwork(nn.Module):
     ----------
     in_channels : (int) Number of channels in the input tensor
     out_channels : (int) Number of channels produced by the convolution
-    scale: (str) Can be 's', 'm' or 'l'. These represent the scale in which
-        the prediction is being made. Ultimately, it decides which anchors to
-        use in the Yolo Layer. Please see YoloLayer for more details.
-    stride: (int) 
+    last_layer_dim: (int) Number of dimensions in the last layer. This will
+        be equal to the product of:
+            - nA (number of anchors per scale) (usually this is 3)
+            - nC+5. 5 comes from w, y, w, h and obj_conf
+        For example, for 80 classes, last_layer_dim will be 255
+    anchors: (list) List of tuples representing anchors. Each tuple will
+        contain 2 ints, representing the width and height of the anchor box
+        respectively. Example: [(10, 13), (16, 30), (33, 23)]
+    nC: (int) Number of the classes in the dataset
+    img_size: (int) Width and height (in pixels) of the input image. This
+        network assumes square images.
     """
-    def __init__(self, in_channels, out_channels, last_layer_dim, anchors, num_classes, img_size):
+    def __init__(self, in_channels, out_channels, last_layer_dim, anchors, nC, img_size):
         super().__init__()
         self.img_size = img_size
         half_out_channels = out_channels // 2
+
+        # bunch of convolutional layers to do prediction
         self.conv1 = ConvLayer(in_channels, half_out_channels, 1, 1)
         self.conv2 = ConvLayer(half_out_channels, out_channels, 3, 1)
         self.conv3 = ConvLayer(out_channels, half_out_channels, 1, 1)
@@ -292,7 +318,7 @@ class PredictionNetwork(nn.Module):
         self.conv5 = ConvLayer(out_channels, half_out_channels, 1, 1)
         self.conv6 = ConvLayer(half_out_channels, out_channels, 3, 1)
         self.conv7 = nn.Conv2d(out_channels, last_layer_dim, 1, bias=True)
-        self.yolo = YoloLayer(anchors, num_classes, img_size)
+        self.yolo = YoloLayer(anchors, nC, img_size)
 
     def forward(self, x, targets=None):
         tmp = self.conv1(x)
@@ -300,19 +326,19 @@ class PredictionNetwork(nn.Module):
         tmp = self.conv3(tmp)
         tmp = self.conv4(tmp)
 
-        # branch which will be used in the YoloNeck module
+        # branch which will be used in the next prediction network
         branch = self.conv5(tmp)
 
         out = self.conv6(branch)
         out = self.conv7(out)
 
         if targets is None:
-            out, _ = self.yolo(out, targets, img_size=self.img_size)
+            yolo_out, _ = self.yolo(out, targets, img_size=self.img_size)
             return branch, out, _
         
         else:
-            out, loss = self.yolo(out, targets, img_size=self.img_size)
-            return branch, out, loss
+            yolo_out, loss = self.yolo(out, targets, img_size=self.img_size)
+            return branch, out, processed_targets
 
 
 class YoloNeck(nn.Module):
@@ -356,8 +382,15 @@ class YoloNeck(nn.Module):
     they are independent from the input image dimensions. They are dependant on
     which layers are used to concatenate with the output of the feature
     extractor network.
+
+    Parameters
+    ----------
+    nC: (int) Number of the classes in the dataset
+    img_size: (int) Width and height (in pixels) of the input image. This
+        network assumes square images.
+    
     """
-    def __init__(self, num_classes, img_size):
+    def __init__(self, nC, img_size):
         super().__init__()
 
         # anchors for all scales
@@ -367,21 +400,21 @@ class YoloNeck(nn.Module):
 
         # calculate last layer dim
         # (x, y, width, height) + (obj) + (class probabilities)
-        num_predictables = 5 + num_classes
+        num_predictables = 5 + nC
 
         # 3 box predictions per image
         self.last_layer_dim = 3 * num_predictables
 
         # this network acts on the earliest output from the feature extractor network, which outputs a tensor with 1024 filters
-        self.detect1  = PredictionNetwork(1024, 1024, self.last_layer_dim, self.l_anchors, num_classes, img_size)
+        self.detect1  = PredictionNetwork(1024, 1024, self.last_layer_dim, self.l_anchors, nC, img_size)
         
         self.conv1 = ConvLayer(512, 256, 1, 1) 
         # this network acts on the middle output from the feature extractor network, which outputs a tensor with 512 filters
-        self.detect2 = PredictionNetwork(768, 512, self.last_layer_dim, self.m_anchors, num_classes, img_size)
+        self.detect2 = PredictionNetwork(768, 512, self.last_layer_dim, self.m_anchors, nC, img_size)
         
         self.conv2 = ConvLayer(256, 128, 1, 1)
         # this network acts on the earliest output from the feature extractor network, which outputs a tensor with 256 filters
-        self.detect3 = PredictionNetwork(384, 256, self.last_layer_dim, self.s_anchors, num_classes, img_size)  
+        self.detect3 = PredictionNetwork(384, 256, self.last_layer_dim, self.s_anchors, nC, img_size)  
 
     def forward(self, x1, x2, x3, targets=None):
 
@@ -409,10 +442,10 @@ class YoloNeck(nn.Module):
 
 class YoloNetV3(nn.Module):
 
-    def __init__(self, num_classes, img_size, nms=False, post=True):
+    def __init__(self, nC, img_size, nms=False, post=True):
         super().__init__()
         self.darknet = FeatureExtractor()
-        self.yolo_tail = YoloNeck(num_classes, img_size)
+        self.yolo_tail = YoloNeck(nC, img_size)
         self.nms = nms
         self._post_process = post
 
