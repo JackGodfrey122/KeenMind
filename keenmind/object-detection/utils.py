@@ -1,11 +1,63 @@
 import torch
+import numpy as np
+
+
+def xywh2xyxy_np(x):
+    """
+    Transforms center coords and width/height to (x1, y1) (x2, y2) coords.
+
+    (x1, y1) is upper left coord of box and (x2, y2) is lower right of box.
+
+    Parameters
+    ----------
+    x : (torch.Tensor) Torch Tensor where the indices are as follows:
+        0: center x value
+        1: center y value
+        2: width of box
+        3: height of box
+
+    Returns
+    -------
+    (numpy array) Numpy array with dims (nB, 4)
+    """
+    out = np.zeros_like(x)
+    out[..., 0] = x[..., 0] - x[..., 2] / 2
+    out[..., 1] = x[..., 1] - x[..., 3] / 2
+    out[..., 2] = x[..., 0] + x[..., 2] / 2
+    out[..., 3] = x[..., 1] + x[..., 3] / 2
+    return out
 
 
 def to_cpu(tensor):
+    """
+    Moves CUDA Tensor to cpu
+
+    Parameters
+    ----------
+    tensor : (torch.Tensor)
+
+    Returns
+    -------
+    (torch.Tensor)
+    
+    """
     return tensor.detach().cpu()
 
 
 def bbox_wh_iou(wh1, wh2):
+    """
+    Calculates the IoU between two bounding boxes parameterized by width and
+    height.
+
+    Parameters
+    ----------
+    wh1 : (torch.Tensor) Bounding box 1
+    wh2 : (torch.Tensor) Bounding box 2
+
+    Returns
+    -------
+    (torch.Tensor) Tensor containing IoU score
+    """
     wh2 = wh2.t()
     w1, h1 = wh1[0], wh1[1]
     w2, h2 = wh2[0], wh2[1]
@@ -16,7 +68,20 @@ def bbox_wh_iou(wh1, wh2):
 
 def bbox_iou(box1, box2, x1y1x2y2=True):
     """
-    Returns the IoU of two bounding boxes
+    Returns the IoU of two bounding boxes. By default, these boxes are
+    exprected to be parameterized by upper left and lower right xy coords.
+
+    Parameters
+    ----------
+    box1: (torch.Tensor) Bounding box 1
+    box2: (torch.Tensor) Bounding box 2
+    x1y1x2y2 (bool): If False, assumes the boxes are parameterized by
+    center,width,height coords, and converts to exact coords before
+    proceeding with IoU calculation.
+
+    Returns
+    -------
+    (torch.Tensor) Tensor containing IoU score
     """
     if not x1y1x2y2:
         # Transform from center and width to exact coordinates
@@ -48,6 +113,51 @@ def bbox_iou(box1, box2, x1y1x2y2=True):
 
 
 def build_targets(pred_boxes, pred_cls, target, anchors, ignore_thres):
+    """
+    Builds scaled targets given raw input targets.
+
+    Parameters
+    ----------
+    pred_boxes: (torch.Tensor) Tensor of dims (nB, nA, nG, nG, 4). This
+        represents the bounding box prediction for each cell per anchor
+        per image in batch.
+    pred_cls: (torch.Tensor) Tensor of dims (nB, nA, nG, nG, nC). This
+        represents the class prediction for each cell per anchor per image
+        in batch.
+    target: (torch.Tensor) Tensor of dims (nB, 6). These are the raw targets
+        that were inputted into the model. 6 Comes from the following:
+            - batch index
+            - cls index
+            - bbox coords parameterized by upper left and lower right xy
+                coords
+    anchors: (torch.Tensor) Tensor of dims (3, 2). 3 anchors per scale, and
+        each anchor is parameterized by 2 values (unsure what these represent)
+    ignore_thres: (float) If bbox IoU is below this value, don't consider a
+        valid prediction.
+
+    Returns
+    -------
+    iou_scores: (torch.Tensor) Tensor of dims (nB, nA, nG, nG). IoU for
+        each target and bounding box combination.
+    class_mask: (torch.Tensor) Tensor of dims (nB, nA, nG, nG). Used to
+        mask class predictions.
+    obj_mask: (torch.Tensor) Tensor of dims (nB, nA, nG, nG). Used to
+        mask predictions which contains an object.
+    noobj_mask: (torch.Tensor) Tensor of dims (nB, nA, nG, nG). Used to
+        mask predictions which do not contain an object.
+    tx: (torch.Tensor) Tensor of dims (nB, nA, nG, nG). Predictions for
+        center x value.
+    ty: (torch.Tensor) Tensor of dims (nB, nA, nG, nG). Predictions for
+        center y value.
+    tw: (torch.Tensor) Tensor of dims (nB, nA, nG, nG). Predictions for
+        center width of bounding box.
+    th: (torch.Tensor) Tensor of dims (nB, nA, nG, nG). Predictions for
+        center height of bounding box.
+    tcls: (torch.Tensor) Tensor of dims (nB, nA, nG, nG, nC). Used to
+        store class predictions.
+    tconf: (torch.Tensor) Tensor of dims (nB, nA, nG, nG). Represents
+        if an object is present.
+    """
 
     BoolTensor = torch.cuda.BoolTensor if pred_boxes.is_cuda else torch.BoolTensor
     FloatTensor = torch.cuda.FloatTensor if pred_boxes.is_cuda else torch.FloatTensor
