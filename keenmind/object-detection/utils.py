@@ -1,11 +1,72 @@
 import torch
+import numpy as np
+
+
+def xywh2xyxy(x):
+    y = x.new(x.shape)
+    y[..., 0] = x[..., 0] - x[..., 2] / 2
+    y[..., 1] = x[..., 1] - x[..., 3] / 2
+    y[..., 2] = x[..., 0] + x[..., 2] / 2
+    y[..., 3] = x[..., 1] + x[..., 3] / 2
+    return y
+
+
+def xywh2xyxy_np(x):
+    """
+    Transforms center coords and width/height to (x1, y1) (x2, y2) coords.
+
+    (x1, y1) is upper left coord of box and (x2, y2) is lower right of box.
+
+    Parameters
+    ----------
+    x : (torch.Tensor) Torch Tensor where the indices are as follows:
+        0: center x value
+        1: center y value
+        2: width of box
+        3: height of box
+
+    Returns
+    -------
+    (numpy array) Numpy array with dims (nB, 4)
+    """
+    out = np.zeros_like(x)
+    out[..., 0] = x[..., 0] - x[..., 2] / 2
+    out[..., 1] = x[..., 1] - x[..., 3] / 2
+    out[..., 2] = x[..., 0] + x[..., 2] / 2
+    out[..., 3] = x[..., 1] + x[..., 3] / 2
+    return out
 
 
 def to_cpu(tensor):
+    """
+    Moves CUDA Tensor to cpu
+
+    Parameters
+    ----------
+    tensor : (torch.Tensor)
+
+    Returns
+    -------
+    (torch.Tensor)
+    
+    """
     return tensor.detach().cpu()
 
 
 def bbox_wh_iou(wh1, wh2):
+    """
+    Calculates the IoU between two bounding boxes parameterized by width and
+    height.
+
+    Parameters
+    ----------
+    wh1 : (torch.Tensor) Bounding box 1
+    wh2 : (torch.Tensor) Bounding box 2
+
+    Returns
+    -------
+    (torch.Tensor) Tensor containing IoU score
+    """
     wh2 = wh2.t()
     w1, h1 = wh1[0], wh1[1]
     w2, h2 = wh2[0], wh2[1]
@@ -16,7 +77,20 @@ def bbox_wh_iou(wh1, wh2):
 
 def bbox_iou(box1, box2, x1y1x2y2=True):
     """
-    Returns the IoU of two bounding boxes
+    Returns the IoU of two bounding boxes. By default, these boxes are
+    exprected to be parameterized by upper left and lower right xy coords.
+
+    Parameters
+    ----------
+    box1: (torch.Tensor) Bounding box 1
+    box2: (torch.Tensor) Bounding box 2
+    x1y1x2y2 (bool): If False, assumes the boxes are parameterized by
+    center,width,height coords, and converts to exact coords before
+    proceeding with IoU calculation.
+
+    Returns
+    -------
+    (torch.Tensor) Tensor containing IoU score
     """
     if not x1y1x2y2:
         # Transform from center and width to exact coordinates
@@ -48,6 +122,51 @@ def bbox_iou(box1, box2, x1y1x2y2=True):
 
 
 def build_targets(pred_boxes, pred_cls, target, anchors, ignore_thres):
+    """
+    Builds scaled targets given raw input targets.
+
+    Parameters
+    ----------
+    pred_boxes: (torch.Tensor) Tensor of dims (nB, nA, nG, nG, 4). This
+        represents the bounding box prediction for each cell per anchor
+        per image in batch.
+    pred_cls: (torch.Tensor) Tensor of dims (nB, nA, nG, nG, nC). This
+        represents the class prediction for each cell per anchor per image
+        in batch.
+    target: (torch.Tensor) Tensor of dims (nB, 6). These are the raw targets
+        that were inputted into the model. 6 Comes from the following:
+            - batch index
+            - cls index
+            - bbox coords parameterized by upper left and lower right xy
+                coords
+    anchors: (torch.Tensor) Tensor of dims (3, 2). 3 anchors per scale, and
+        each anchor is parameterized by 2 values (unsure what these represent)
+    ignore_thres: (float) If bbox IoU is below this value, don't consider a
+        valid prediction.
+
+    Returns
+    -------
+    iou_scores: (torch.Tensor) Tensor of dims (nB, nA, nG, nG). IoU for
+        each target and bounding box combination.
+    class_mask: (torch.Tensor) Tensor of dims (nB, nA, nG, nG). Used to
+        mask class predictions.
+    obj_mask: (torch.Tensor) Tensor of dims (nB, nA, nG, nG). Used to
+        mask predictions which contains an object.
+    noobj_mask: (torch.Tensor) Tensor of dims (nB, nA, nG, nG). Used to
+        mask predictions which do not contain an object.
+    tx: (torch.Tensor) Tensor of dims (nB, nA, nG, nG). Predictions for
+        center x value.
+    ty: (torch.Tensor) Tensor of dims (nB, nA, nG, nG). Predictions for
+        center y value.
+    tw: (torch.Tensor) Tensor of dims (nB, nA, nG, nG). Predictions for
+        center width of bounding box.
+    th: (torch.Tensor) Tensor of dims (nB, nA, nG, nG). Predictions for
+        center height of bounding box.
+    tcls: (torch.Tensor) Tensor of dims (nB, nA, nG, nG, nC). Used to
+        store class predictions.
+    tconf: (torch.Tensor) Tensor of dims (nB, nA, nG, nG). Represents
+        if an object is present.
+    """
 
     BoolTensor = torch.cuda.BoolTensor if pred_boxes.is_cuda else torch.BoolTensor
     FloatTensor = torch.cuda.FloatTensor if pred_boxes.is_cuda else torch.FloatTensor
@@ -119,3 +238,166 @@ def build_targets(pred_boxes, pred_cls, target, anchors, ignore_thres):
 
     tconf = obj_mask.float()
     return iou_scores, class_mask, obj_mask, noobj_mask, tx, ty, tw, th, tcls, tconf
+
+
+def non_max_suppression(prediction, conf_thres=0.5, nms_thres=0.4):
+    """
+    Removes detections with lower object confidence score than 'conf_thres' and performs
+    Non-Maximum Suppression to further filter detections.
+    Returns detections with shape:
+        (x1, y1, x2, y2, object_conf, class_score, class_pred)
+    """
+
+    # From (center x, center y, width, height) to (x1, y1, x2, y2)
+    prediction[..., :4] = xywh2xyxy(prediction[..., :4])
+    output = [None for _ in range(len(prediction))]
+    for image_i, image_pred in enumerate(prediction):
+        # Filter out confidence scores below threshold
+        image_pred = image_pred[image_pred[:, 4] >= conf_thres]
+        # If none are remaining => process next image
+        if not image_pred.size(0):
+            continue
+        # Object confidence times class confidence
+        score = image_pred[:, 4] * image_pred[:, 5:].max(1)[0]
+        # Sort by it
+        image_pred = image_pred[(-score).argsort()]
+        class_confs, class_preds = image_pred[:, 5:].max(1, keepdim=True)
+        detections = torch.cat((image_pred[:, :5], class_confs.float(), class_preds.float()), 1)
+        # Perform non-maximum suppression
+        keep_boxes = []
+        while detections.size(0):
+            large_overlap = bbox_iou(detections[0, :4].unsqueeze(0), detections[:, :4]) > nms_thres
+            label_match = detections[0, -1] == detections[:, -1]
+            # Indices of boxes with lower confidence scores, large IOUs and matching labels
+            invalid = large_overlap & label_match
+            weights = detections[invalid, 4:5]
+            # Merge overlapping bboxes by order of confidence
+            detections[0, :4] = (weights * detections[invalid, :4]).sum(0) / weights.sum()
+            keep_boxes += [detections[0]]
+            detections = detections[~invalid]
+        if keep_boxes:
+            output[image_i] = torch.stack(keep_boxes)
+
+    return output
+
+
+def get_batch_statistics(outputs, targets, iou_threshold):
+    """ Compute true positives, predicted scores and predicted labels per sample """
+    batch_metrics = []
+    for sample_i in range(len(outputs)):
+
+        if outputs[sample_i] is None:
+            continue
+
+        output = outputs[sample_i]
+        pred_boxes = output[:, :4]
+        pred_scores = output[:, 4]
+        pred_labels = output[:, -1]
+
+        true_positives = np.zeros(pred_boxes.shape[0])
+
+        annotations = targets[targets[:, 0] == sample_i][:, 1:]
+        target_labels = annotations[:, 0] if len(annotations) else []
+        if len(annotations):
+            detected_boxes = []
+            target_boxes = annotations[:, 1:]
+
+            for pred_i, (pred_box, pred_label) in enumerate(zip(pred_boxes, pred_labels)):
+
+                # If targets are found break
+                if len(detected_boxes) == len(annotations):
+                    break
+
+                # Ignore if label is not one of the target labels
+                if pred_label not in target_labels:
+                    continue
+
+                iou, box_index = bbox_iou(pred_box.unsqueeze(0), target_boxes).max(0)
+                if iou >= iou_threshold and box_index not in detected_boxes:
+                    true_positives[pred_i] = 1
+                    detected_boxes += [box_index]
+        batch_metrics.append([true_positives, pred_scores, pred_labels])
+    return batch_metrics
+
+
+def ap_per_class(tp, conf, pred_cls, target_cls):
+    """ Compute the average precision, given the recall and precision curves.
+    Source: https://github.com/rafaelpadilla/Object-Detection-Metrics.
+    # Arguments
+        tp:    True positives (list).
+        conf:  Objectness value from 0-1 (list).
+        pred_cls: Predicted object classes (list).
+        target_cls: True object classes (list).
+    # Returns
+        The average precision as computed in py-faster-rcnn.
+    """
+
+    # Sort by objectness
+    i = np.argsort(-conf)
+    tp, conf, pred_cls = tp[i], conf[i], pred_cls[i]
+
+    # Find unique classes
+    unique_classes = np.unique(target_cls)
+
+    # Create Precision-Recall curve and compute AP for each class
+    ap, p, r = [], [], []
+    for c in unique_classes:
+        i = pred_cls == c
+        n_gt = (target_cls == c).sum()  # Number of ground truth objects
+        n_p = i.sum()  # Number of predicted objects
+
+        if n_p == 0 and n_gt == 0:
+            continue
+        elif n_p == 0 or n_gt == 0:
+            ap.append(0)
+            r.append(0)
+            p.append(0)
+        else:
+            # Accumulate FPs and TPs
+            fpc = (1 - tp[i]).cumsum()
+            tpc = (tp[i]).cumsum()
+
+            # Recall
+            recall_curve = tpc / (n_gt + 1e-16)
+            r.append(recall_curve[-1])
+
+            # Precision
+            precision_curve = tpc / (tpc + fpc)
+            p.append(precision_curve[-1])
+
+            # AP from recall-precision curve
+            ap.append(compute_ap(recall_curve, precision_curve))
+
+    # Compute F1 score (harmonic mean of precision and recall)
+    p, r, ap = np.array(p), np.array(r), np.array(ap)
+    f1 = 2 * p * r / (p + r + 1e-16)
+
+    return p, r, ap, f1, unique_classes.astype("int32")
+
+
+
+def compute_ap(recall, precision):
+    """ Compute the average precision, given the recall and precision curves.
+    Code originally from https://github.com/rbgirshick/py-faster-rcnn.
+    # Arguments
+        recall:    The recall curve (list).
+        precision: The precision curve (list).
+    # Returns
+        The average precision as computed in py-faster-rcnn.
+    """
+    # correct AP calculation
+    # first append sentinel values at the end
+    mrec = np.concatenate(([0.0], recall, [1.0]))
+    mpre = np.concatenate(([0.0], precision, [0.0]))
+
+    # compute the precision envelope
+    for i in range(mpre.size - 1, 0, -1):
+        mpre[i - 1] = np.maximum(mpre[i - 1], mpre[i])
+
+    # to calculate area under PR curve, look for points
+    # where X axis (recall) changes value
+    i = np.where(mrec[1:] != mrec[:-1])[0]
+
+    # and sum (\Delta recall) * prec
+    ap = np.sum((mrec[i + 1] - mrec[i]) * mpre[i + 1])
+    return ap

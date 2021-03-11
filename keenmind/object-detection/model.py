@@ -222,15 +222,17 @@ class YoloLayer(nn.Module):
         self.nG = nG
         g = self.nG
         self.stride = self.img_size / self.nG
-        
+        FloatTensor = torch.cuda.FloatTensor if cuda else torch.FloatTensor
         # Calculate offsets for each grid
-        self.grid_x = torch.arange(g).repeat(g, 1).view([1, 1, g, g]).type(torch.FloatTensor)
-        self.grid_y = torch.arange(g).repeat(g, 1).t().view([1, 1, g, g]).type(torch.FloatTensor)
-        self.scaled_anchors = torch.FloatTensor([(a_w / self.stride, a_h / self.stride) for a_w, a_h in self.anchors])
+        self.grid_x = torch.arange(g).repeat(g, 1).view([1, 1, g, g]).type(FloatTensor)
+        self.grid_y = torch.arange(g).repeat(g, 1).t().view([1, 1, g, g]).type(FloatTensor)
+        self.scaled_anchors = FloatTensor([(a_w / self.stride, a_h / self.stride) for a_w, a_h in self.anchors])
         self.anchor_w = self.scaled_anchors[:, 0:1].view((1, self.nA, 1, 1))
         self.anchor_h = self.scaled_anchors[:, 1:2].view((1, self.nA, 1, 1))
 
     def forward(self, x, targets=None, img_size=None):
+        FloatTensor = torch.cuda.FloatTensor if x.is_cuda else torch.FloatTensor
+        LongTensor = torch.cuda.LongTensor if x.is_cuda else torch.LongTensor
 
         self.img_size = img_size
         nB = x.size(0)  # batch size
@@ -255,7 +257,7 @@ class YoloLayer(nn.Module):
             self.compute_grid_offsets(nG, cuda=x.is_cuda)
 
         # Add offset to x and y, and scale w and h
-        pred_boxes = torch.FloatTensor(prediction[..., :4].shape)
+        pred_boxes = FloatTensor(prediction[..., :4].shape)
         pred_boxes[..., 0] = x.data + self.grid_x                 # x
         pred_boxes[..., 1] = y.data + self.grid_y                 # y
         pred_boxes[..., 2] = torch.exp(w.data) * self.anchor_w    # w
@@ -271,7 +273,7 @@ class YoloLayer(nn.Module):
         )
 
         if targets is None:
-            return output, 0
+            return output, 0, 0
         
         else:
             iou_scores, class_mask, obj_mask, noobj_mask, tx, ty, tw, th, tcls, tconf = build_targets(
@@ -306,23 +308,22 @@ class YoloLayer(nn.Module):
             recall75 = torch.sum(iou75 * detected_mask) / (obj_mask.sum() + 1e-16)
 
             self.metrics = {
-                "loss": to_cpu(total_loss).item(),
-                "x": to_cpu(loss_x).item(),
-                "y": to_cpu(loss_y).item(),
-                "w": to_cpu(loss_w).item(),
-                "h": to_cpu(loss_h).item(),
-                "conf": to_cpu(loss_conf).item(),
-                "cls": to_cpu(loss_cls).item(),
-                "cls_acc": to_cpu(cls_acc).item(),
-                "recall50": to_cpu(recall50).item(),
-                "recall75": to_cpu(recall75).item(),
-                "precision": to_cpu(precision).item(),
-                "conf_obj": to_cpu(conf_obj).item(),
-                "conf_noobj": to_cpu(conf_noobj).item(),
-                "grid_size": self.nG,
+                "train/loss": to_cpu(total_loss).item(),
+                "train/x": to_cpu(loss_x).item(),
+                "train/y": to_cpu(loss_y).item(),
+                "train/w": to_cpu(loss_w).item(),
+                "train/h": to_cpu(loss_h).item(),
+                "train/conf": to_cpu(loss_conf).item(),
+                "train/cls": to_cpu(loss_cls).item(),
+                "train/cls_acc": to_cpu(cls_acc).item(),
+                "train/recall50": to_cpu(recall50).item(),
+                "train/recall75": to_cpu(recall75).item(),
+                "train/precision": to_cpu(precision).item(),
+                "train/conf_obj": to_cpu(conf_obj).item(),
+                "train/conf_noobj": to_cpu(conf_noobj).item()
             }
 
-            return output, total_loss
+            return output, total_loss, self.metrics
 
 
 class PredictionNetwork(nn.Module):
@@ -389,12 +390,12 @@ class PredictionNetwork(nn.Module):
         out = self.conv7(out)
 
         if targets is None:
-            yolo_out, _ = self.yolo(out, targets, img_size=self.img_size)
-            return branch, out, _
+            yolo_out, _, _ = self.yolo(out, targets, img_size=self.img_size)
+            return branch, yolo_out, _, _
         
         else:
-            yolo_out, loss = self.yolo(out, targets, img_size=self.img_size)
-            return branch, out, loss
+            yolo_out, loss, metrics = self.yolo(out, targets, img_size=self.img_size)
+            return branch, yolo_out, loss, metrics
 
 
 class YoloNeck(nn.Module):
@@ -475,40 +476,45 @@ class YoloNeck(nn.Module):
     def forward(self, x1, x2, x3, targets=None):
 
         # prediction 1
-        branch1, out1, l1 = self.detect1(x1, targets)
+        branch1, out1, l1, metrics1 = self.detect1(x1, targets)
 
         # prediction 2
         tmp = self.conv1(branch1)
         tmp = F.interpolate(tmp, scale_factor=2)  # upscales the branch by 2
         tmp = torch.cat((tmp, x2), 1)
-        branch2, out2, l2 = self.detect2(tmp, targets)
+        branch2, out2, l2, metrics2  = self.detect2(tmp, targets)
 
         # prediction 3
         tmp = self.conv2(branch2)
         tmp = F.interpolate(tmp, scale_factor=2)  # upscales the branch by 2
         tmp = torch.cat((tmp, x3), 1)
-        _, out3, l3 = self.detect3(tmp, targets) # branch is not needed here
+        _, out3, l3, metrics3 = self.detect3(tmp, targets) # branch is not needed here
 
+        total_loss = l1 + l2 + l3
+        yolo_outputs = to_cpu(torch.cat([out1, out2, out3], 1))
         if targets is None:
-            return out1, out2, out3
+            return yolo_outputs
         
         else:
-            return (out1, l1), (out2, l2), (out3, l3)
+            metrics = {
+                'Yolo Layer 1': metrics1,
+                'Yolo Layer 2': metrics2,
+                'Yolo Layer 3': metrics3
+            }
+            return (yolo_outputs, total_loss, metrics)
 
 
 class YoloNetV3(nn.Module):
 
-    def __init__(self, nC, img_size, nms=False, post=True):
+    def __init__(self, nC, img_size):
         super().__init__()
         self.darknet = FeatureExtractor()
         self.yolo_tail = YoloNeck(nC, img_size)
-        self.nms = nms
-        self._post_process = post
 
     def forward(self, x, targets=None):
         tmp1, tmp2, tmp3 = self.darknet(x)
-        out1, out2, out3 = self.yolo_tail(tmp1, tmp2, tmp3, targets)
-        return out1, out2, out3
+        out = self.yolo_tail(tmp1, tmp2, tmp3, targets)
+        return out
 
 if __name__ == "__main__":
 
@@ -517,4 +523,4 @@ if __name__ == "__main__":
     test = torch.rand(2, 3, img_size, img_size)
     label = torch.tensor([[0.000, 6.000, 0.546, 0.654, 0.123, 0.111], [0.000, 6.000, 0.546, 0.654, 0.123, 0.111]])
     yolo = YoloNetV3(num_classes, img_size)
-    out1, out2, out3 = yolo(test, label)
+    out = yolo(test)
