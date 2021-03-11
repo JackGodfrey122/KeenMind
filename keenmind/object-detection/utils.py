@@ -372,8 +372,7 @@ def get_batch_statistics(outputs, targets, iou_threshold):
                 # get IoU
                 iou, box_index = bbox_iou(
                     pred_box.unsqueeze(0),
-                    target_boxes)
-                    .max(0)
+                    target_boxes).max(0)
 
                 # TP if above IoU thresh and has not been already predicted
                 if iou >= iou_threshold and box_index not in detected_boxes:
