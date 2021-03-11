@@ -2,29 +2,59 @@ import torch
 import numpy as np
 
 
-def xywh2xyxy_np(x):
+def xywh2xyxy(in_tensor):
     """
-    Transforms center coords and width/height to (x1, y1) (x2, y2) coords.
-
-    (x1, y1) is upper left coord of box and (x2, y2) is lower right of box.
+    Given a Tensor with dimensions (nB, N, nP) where:
+        - nB: batch size
+        - N: Number of predictions
+        - nP: Number of predictables (usually 5 + number of classes)
+    and assuming that the center x, center y, width and height occupy the
+    first 4 indexes of nP, then this function will convert those first 4
+    indexes to x1, y1, x2, y2, where (x1, y1) represent the upper left
+    corner of the bounding box, and (x2, y2) represent the lower right
+    corner of the box.
 
     Parameters
     ----------
-    x : (torch.Tensor) Torch Tensor where the indices are as follows:
-        0: center x value
-        1: center y value
-        2: width of box
-        3: height of box
+    in_tensor : (torch.Tensor) Usually the output of a YoloV3 model
 
     Returns
     -------
-    (numpy array) Numpy array with dims (nB, 4)
+    (torch.Tensor) A copy of in_tensor with modified coordinate values
     """
-    out = np.zeros_like(x)
-    out[..., 0] = x[..., 0] - x[..., 2] / 2
-    out[..., 1] = x[..., 1] - x[..., 3] / 2
-    out[..., 2] = x[..., 0] + x[..., 2] / 2
-    out[..., 3] = x[..., 1] + x[..., 3] / 2
+    out_tensor = in_tensor.new(in_tensor.shape)
+    out_tensor[..., 0] = in_tensor[..., 0] - in_tensor[..., 2] / 2
+    out_tensor[..., 1] = in_tensor[..., 1] - in_tensor[..., 3] / 2
+    out_tensor[..., 2] = in_tensor[..., 0] + in_tensor[..., 2] / 2
+    out_tensor[..., 3] = in_tensor[..., 1] + in_tensor[..., 3] / 2
+    return out_tensor
+
+
+def xywh2xyxy_np(in_tensor):
+    """
+    Given a Tensor with dimensions (nB, N, nP) where:
+        - nB: batch size
+        - N: Number of predictions
+        - nP: Number of predictables (usually 5 + number of classes)
+    and assuming that the center x, center y, width and height occupy the
+    first 4 indexes of nP, then this function will convert those first 4
+    indexes to x1, y1, x2, y2, where (x1, y1) represent the upper left
+    corner of the bounding box, and (x2, y2) represent the lower right
+    corner of the box, and return as a numpy array.
+
+    Parameters
+    ----------
+    in_tensor : (torch.Tensor) Usually the output of a YoloV3 model
+
+    Returns
+    -------
+    (numpy.Array) A numpy array with modified coordinate values
+    """
+    out = np.zeros_like(in_tensor)
+    out[..., 0] = in_tensor[..., 0] - in_tensor[..., 2] / 2
+    out[..., 1] = in_tensor[..., 1] - in_tensor[..., 3] / 2
+    out[..., 2] = in_tensor[..., 0] + in_tensor[..., 2] / 2
+    out[..., 3] = in_tensor[..., 1] + in_tensor[..., 3] / 2
     return out
 
 
@@ -233,6 +263,16 @@ def build_targets(pred_boxes, pred_cls, target, anchors, ignore_thres):
 
 def non_max_suppression(prediction, conf_thres=0.5, nms_thres=0.4):
     """
+    Applies Non-Max Supression to bounding box predictions.
+
+    It is assumed that the input is a Tensor with dimensions (nB, N, nP)
+    where:
+        - nB: batch size
+        - N: Number of predictions
+        - nP: Number of predictables (usually 5 + number of classes)
+    and that the center x, center y, width and height occupy the
+    first 4 indexes of nP.
+
     Removes detections with lower object confidence score than 'conf_thres' and performs
     Non-Maximum Suppression to further filter detections.
     Returns detections with shape:
@@ -242,7 +282,7 @@ def non_max_suppression(prediction, conf_thres=0.5, nms_thres=0.4):
     # From (center x, center y, width, height) to (x1, y1, x2, y2)
     prediction[..., :4] = xywh2xyxy(prediction[..., :4])
     output = [None for _ in range(len(prediction))]
-    for image_i, image_pred in enumerate(prediction):
+    for image_i, image_pred in enumerate(prediction): # for each image in batch
         # Filter out confidence scores below threshold
         image_pred = image_pred[image_pred[:, 4] >= conf_thres]
         # If none are remaining => process next image
@@ -257,8 +297,8 @@ def non_max_suppression(prediction, conf_thres=0.5, nms_thres=0.4):
         # Perform non-maximum suppression
         keep_boxes = []
         while detections.size(0):
-            large_overlap = bbox_iou(detections[0, :4].unsqueeze(0), detections[:, :4]) > nms_thres
-            label_match = detections[0, -1] == detections[:, -1]
+            large_overlap = bbox_iou(detections[0, :4].unsqueeze(0), detections[:, :4]) > nms_thres  # keep boxes with large overlap
+            label_match = detections[0, -1] == detections[:, -1]  # track predictions with correct label predictions
             # Indices of boxes with lower confidence scores, large IOUs and matching labels
             invalid = large_overlap & label_match
             weights = detections[invalid, 4:5]
@@ -273,25 +313,51 @@ def non_max_suppression(prediction, conf_thres=0.5, nms_thres=0.4):
 
 
 def get_batch_statistics(outputs, targets, iou_threshold):
-    """ Compute true positives, predicted scores and predicted labels per sample """
+    """
+    Compute true positives, predicted scores and predicted labels per sample
+
+    Parameters
+    ----------
+    outputs : (list) list of tensors which have been processed by non max
+        supression. Tensors will be dim (preds_after_NMS, num_class)
+    targets : (torch.Tensor) Tensor of targets from the DataLoader
+    iou_threshold : (float) Between 0-1
+
+    Returns
+    -------
+    (list) List of lists which contain:
+        [true positives, prediction scores, prediction labels]
+        - true postives (int)
+        - prediction scores (torch.Tensor) Dimension == number of predictions
+            in output
+        - prediction labels (torch.Tensor) Dimension == number of predictions
+            in output
+    """
     batch_metrics = []
-    for sample_i in range(len(outputs)):
+    for sample_i in range(len(outputs)):  # for each prediction
 
         if outputs[sample_i] is None:
             continue
 
-        output = outputs[sample_i]
+        output = outputs[sample_i]  # get output
+
+        # unpack all
         pred_boxes = output[:, :4]
         pred_scores = output[:, 4]
         pred_labels = output[:, -1]
 
+        # init tp array of size == number of predictions after nms
         true_positives = np.zeros(pred_boxes.shape[0])
 
+        # get predictables for target
         annotations = targets[targets[:, 0] == sample_i][:, 1:]
+
+        # get label from target
         target_labels = annotations[:, 0] if len(annotations) else []
+
         if len(annotations):
             detected_boxes = []
-            target_boxes = annotations[:, 1:]
+            target_boxes = annotations[:, 1:]  # get bbox predictables
 
             for pred_i, (pred_box, pred_label) in enumerate(zip(pred_boxes, pred_labels)):
 
@@ -302,27 +368,43 @@ def get_batch_statistics(outputs, targets, iou_threshold):
                 # Ignore if label is not one of the target labels
                 if pred_label not in target_labels:
                     continue
+                
+                # get IoU
+                iou, box_index = bbox_iou(
+                    pred_box.unsqueeze(0),
+                    target_boxes)
+                    .max(0)
 
-                iou, box_index = bbox_iou(pred_box.unsqueeze(0), target_boxes).max(0)
+                # TP if above IoU thresh and has not been already predicted
                 if iou >= iou_threshold and box_index not in detected_boxes:
                     true_positives[pred_i] = 1
                     detected_boxes += [box_index]
+
         batch_metrics.append([true_positives, pred_scores, pred_labels])
     return batch_metrics
 
 
 def ap_per_class(tp, conf, pred_cls, target_cls):
-    """ Compute the average precision, given the recall and precision curves.
-    Source: https://github.com/rafaelpadilla/Object-Detection-Metrics.
-    # Arguments
-        tp:    True positives (list).
-        conf:  Objectness value from 0-1 (list).
-        pred_cls: Predicted object classes (list).
-        target_cls: True object classes (list).
-    # Returns
-        The average precision as computed in py-faster-rcnn.
     """
-
+    Compute the average precision, given the recall and precision curves.
+    
+    Source: https://github.com/rafaelpadilla/Object-Detection-Metrics.
+    
+    Parameters
+    ----------
+    tp: (list) True positives
+    conf: (list) Objectness value from 0-1
+    pred_cls: (list) Predicted object classes
+    target_cls: (list) True object classes
+    
+    Returns
+    -------
+    (tuple) Tuple of numpy array representing:
+        - precession
+        - recall
+        - average precision
+        - f1 score
+    """
     # Sort by objectness
     i = np.argsort(-conf)
     tp, conf, pred_cls = tp[i], conf[i], pred_cls[i]
@@ -366,15 +448,20 @@ def ap_per_class(tp, conf, pred_cls, target_cls):
     return p, r, ap, f1, unique_classes.astype("int32")
 
 
-
 def compute_ap(recall, precision):
-    """ Compute the average precision, given the recall and precision curves.
+    """
+    Compute the average precision, given the recall and precision curves.
+
     Code originally from https://github.com/rbgirshick/py-faster-rcnn.
-    # Arguments
-        recall:    The recall curve (list).
-        precision: The precision curve (list).
-    # Returns
-        The average precision as computed in py-faster-rcnn.
+    
+    Parameters
+    ----------
+    recall: () The recall curve (list).
+    precision: ()The precision curve (list).
+    
+    Returns
+    -------
+    () The average precision as computed in py-faster-rcnn.
     """
     # correct AP calculation
     # first append sentinel values at the end

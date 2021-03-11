@@ -14,7 +14,8 @@ from data_loading import ListDataset
 from evaluate import evaluate
 
 
-CONFIG_FILE = sys.argv[1] # '/home/jack/keenmind/keenmind/object-detection/configs/config.yaml'
+# CONFIG_FILE = sys.argv[1]
+CONFIG_FILE = '/home/jack/keenmind/keenmind/object-detection/configs/config.yaml'
 with open(CONFIG_FILE, 'r') as stream:
     raw_config = yaml.safe_load(stream)
 
@@ -23,20 +24,20 @@ config = {k: v['value'] for k, v in raw_config.items()}
 
 run = wandb.init(project='keenmind-od-yolov3', entity='jackg122', config=config)
 
-train_path = config['train_path'] # "/home/jack/data/train_small.txt"
-val_path = config['val_path'] # "/home/jack/data/valid_small.txt"
+train_path = config['train_path']
+val_path = config['val_path']
 
-class_names = config['class_names'] # ['d100', 'd20', 'd12', 'd10', 'd8', 'd6', 'd4']
-img_size = config['img_size']  # 416
-num_classes = config['num_classes']  # 7
-batch_size = config['batch_size']  #4
-num_workers = config['num_workers']  #4
-epochs = config['epochs']  #2
-eval_interval = config['eval_interval']  #1
+class_names = config['class_names']
+img_size = config['img_size']
+num_classes = config['num_classes']
+batch_size = config['batch_size']
+num_workers = config['num_workers']
+epochs = config['epochs']
+eval_interval = config['eval_interval']
 
-iou_thres = config['iou_threshold']  #0.5
-conf_thres = config['conf_threshold']  #0.5
-nms_thres = config['nms_threshold']  #0.5
+iou_thres = config['iou_threshold']
+conf_thres = config['conf_threshold']
+nms_thres = config['nms_threshold']
 
 model_name = config['model_path'] + 'keenmind-od-' + str(datetime.now())
 
@@ -140,7 +141,7 @@ for epoch in range(1, epochs+1):
             "validation/f1": f1.mean()
             })
         
-        torch.save(model, model_name)
+torch.save(model, model_name)
 
           
 
