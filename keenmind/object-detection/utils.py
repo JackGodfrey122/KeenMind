@@ -2,18 +2,6 @@ import torch
 import numpy as np
 
 
-<<<<<<< HEAD
-=======
-def xywh2xyxy(x):
-    y = x.new(x.shape)
-    y[..., 0] = x[..., 0] - x[..., 2] / 2
-    y[..., 1] = x[..., 1] - x[..., 3] / 2
-    y[..., 2] = x[..., 0] + x[..., 2] / 2
-    y[..., 3] = x[..., 1] + x[..., 3] / 2
-    return y
-
-
->>>>>>> od-training
 def xywh2xyxy_np(x):
     """
     Transforms center coords and width/height to (x1, y1) (x2, y2) coords.
