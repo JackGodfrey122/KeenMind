@@ -1,5 +1,11 @@
 import torch
+import torch.nn.functional as F
 import numpy as np
+
+
+def resize(image, size):
+    image = F.interpolate(image.unsqueeze(0), size=size, mode="nearest").squeeze(0)
+    return image
 
 
 def xywh2xyxy(in_tensor):

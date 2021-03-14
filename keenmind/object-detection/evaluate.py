@@ -1,9 +1,30 @@
+import logging
+
 import torch
 from torch.autograd import Variable
 import numpy as np
 
 from utils import xywh2xyxy, non_max_suppression, ap_per_class, get_batch_statistics, compute_ap
 
+
+logging.getLogger(__name__)
+
+METRICS = [
+    "grid_size",
+    "loss",
+    "x",
+    "y",
+    "w",
+    "h",
+    "conf",
+    "cls",
+    "cls_acc",
+    "recall50",
+    "recall75",
+    "precision",
+    "conf_obj",
+    "conf_noobj",
+]
 
 def evaluate(model, dataloader, iou_thres, conf_thres, nms_thres, img_size, batch_size):
     model.eval()
@@ -12,7 +33,7 @@ def evaluate(model, dataloader, iou_thres, conf_thres, nms_thres, img_size, batc
     labels = []
     sample_metrics = []  # List of tuples (TP, confs, pred)
     for batch_i, (_, imgs, targets) in enumerate(dataloader):
-        
+        logging.info('Evaluating batch {} of validation data'.format(batch_i))
         if targets is None:
             continue
             

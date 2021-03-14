@@ -1,7 +1,4 @@
-import glob
-import random
 import os
-import warnings
 import io
 import logging
 
@@ -11,55 +8,14 @@ import numpy as np
 from PIL import Image
 from PIL import ImageFile
 import torch
-import torch.nn.functional as F
 from torch.utils.data import Dataset
+
+from utils import resize
 
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 logger = logging.getLogger(__name__)
-
-def pad_to_square(img, pad_value):
-    c, h, w = img.shape
-    dim_diff = np.abs(h - w)
-    # (upper / left) padding and (lower / right) padding
-    pad1, pad2 = dim_diff // 2, dim_diff - dim_diff // 2
-    # Determine padding
-    pad = (0, 0, pad1, pad2) if h <= w else (pad1, pad2, 0, 0)
-    # Add padding
-    img = F.pad(img, pad, "constant", value=pad_value)
-
-    return img, pad
-
-
-def resize(image, size):
-    image = F.interpolate(image.unsqueeze(0), size=size, mode="nearest").squeeze(0)
-    return image
-
-
-class ImageFolder(Dataset):
-    def __init__(self, folder_path, transform=None):
-        self.files = sorted(glob.glob("%s/*.*" % folder_path))
-        self.transform = transform
-
-    def __getitem__(self, index):
-
-        img_path = self.files[index % len(self.files)]
-        img = np.array(
-            Image.open(img_path).convert('RGB'), 
-            dtype=np.uint8)
-
-        # Label Placeholder
-        boxes = np.zeros((1, 5))
-
-        # Apply transforms
-        if self.transform:
-            img, _ = self.transform((img, boxes))
-
-        return img_path, img
-
-    def __len__(self):
-        return len(self.files)
 
 
 class ListDataset(Dataset):
@@ -100,26 +56,28 @@ class ListDataset(Dataset):
 
     def __getitem__(self, index):
 
+        # load image
         try:
             img_path = self.img_files[index % len(self.img_files)].rstrip()
             img = np.array(Image.open(img_path).convert('RGB'), dtype=np.uint8)
         except Exception as e:
-            logger.info(f"Could not read image '{img_path}'.")
+            logger.warning(f"Could not read image '{img_path}'.")
             return
 
+        # load label
         try:
             label_path = self.label_files[index % len(self.img_files)].rstrip()
             boxes = np.loadtxt(label_path).reshape(-1, 5)
         except Exception as e:
-            logger.info(f"Could not read label '{label_path}'.")
+            logger.warning(f"Could not read label '{label_path}'.")
             return
         
-        if self.transform:
-            try:
-                img, boxes = self.transform((img, boxes))
-            except:
-                logger.info(f"Could not apply transform.")
-                return
+        # do transforms
+        try:
+            img, boxes = self.transform((img, boxes))
+        except:
+            logger.warning(f"Could not apply transform.")
+            return
 
         return img_path, img, boxes
 
@@ -130,11 +88,10 @@ class ListDataset(Dataset):
         batch = [data for data in batch if data is not None]
         paths, imgs, bb_targets = list(zip(*batch))
 
-    
         # Resize images to input shape
         imgs = torch.stack([resize(img, self.img_size) for img in imgs])
 
-        # Add sample index to targets
+        # Add sample index to targets that will be used in NMS much later on
         for i, boxes in enumerate(bb_targets):
             boxes[:, 0] = i
         bb_targets = torch.cat(bb_targets, 0)
@@ -162,8 +119,3 @@ def download_s3_folder(bucket_name, s3_folder, local_dir=None):
         if obj.key[-1] == '/':
             continue
         bucket.download_file(obj.key, target)
-
-if __name__ == "__main__":
-    
-    s3 = boto3.resource('s3')
-    test_aws = download_s3_folder('keenmind-od-data', 'data/', local_dir='data/')
