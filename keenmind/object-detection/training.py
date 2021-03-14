@@ -142,7 +142,3 @@ for epoch in range(1, epochs+1):
             })
         
 torch.save(model, model_name)
-
-          
-
-        

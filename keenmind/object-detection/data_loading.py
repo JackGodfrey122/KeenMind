@@ -3,6 +3,7 @@ import random
 import os
 import warnings
 import io
+import logging
 
 import boto3
 from botocore.config import Config
@@ -16,6 +17,7 @@ from torch.utils.data import Dataset
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
+logger = logging.getLogger(__name__)
 
 def pad_to_square(img, pad_value):
     c, h, w = img.shape
@@ -61,7 +63,29 @@ class ImageFolder(Dataset):
 
 
 class ListDataset(Dataset):
-    def __init__(self, list_path, img_size=416, multiscale=True, transform=None):
+    """
+    Load images and labels from a text file.
+
+    Each line in the text file should contain paths to images. Each image
+    should be in a folder called images, and each image should have a
+    corresponding label file located in a labels folder. The following
+    gives an example of the required folder structure:
+
+        |---images
+        |       |---image1.jpg
+        |       |---image2.jpg
+        |
+        |---labels
+                |---label1.txt
+                |---label2.txt
+
+    Parameters
+    ----------
+    list_path: (str) Path to a file contating the locations of the image files
+    img_size: (int) The size that the images should be resized to
+    transform (torch.Sequential) A Sequential module of image transforms
+    """
+    def __init__(self, list_path, img_size=416, transform=None):
         with open(list_path, "r") as file:
             self.img_files = file.readlines()
 
@@ -71,65 +95,42 @@ class ListDataset(Dataset):
         ]
 
         self.img_size = img_size
-        self.max_objects = 100
-        self.multiscale = multiscale
-        self.min_size = self.img_size - 3 * 32
-        self.max_size = self.img_size + 3 * 32
         self.batch_count = 0
         self.transform = transform
 
     def __getitem__(self, index):
-        
-        # ---------
-        #  Image
-        # ---------
+
         try:
-
             img_path = self.img_files[index % len(self.img_files)].rstrip()
-
             img = np.array(Image.open(img_path).convert('RGB'), dtype=np.uint8)
         except Exception as e:
-            print(f"Could not read image '{img_path}'.")
+            logger.info(f"Could not read image '{img_path}'.")
             return
 
-        # ---------
-        #  Label
-        # ---------
         try:
             label_path = self.label_files[index % len(self.img_files)].rstrip()
-
-            # Ignore warning if file is empty
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                boxes = np.loadtxt(label_path).reshape(-1, 5)
+            boxes = np.loadtxt(label_path).reshape(-1, 5)
         except Exception as e:
-            print(f"Could not read label '{label_path}'.")
+            logger.info(f"Could not read label '{label_path}'.")
             return
-
-        # -----------
-        #  Transform
-        # -----------
+        
         if self.transform:
             try:
-                img, bb_targets = self.transform((img, boxes))
+                img, boxes = self.transform((img, boxes))
             except:
-                print(f"Could not apply transform.")
+                logger.info(f"Could not apply transform.")
                 return
 
-        return img_path, img, bb_targets
+        return img_path, img, boxes
 
     def collate_fn(self, batch):
         self.batch_count += 1
 
         # Drop invalid images
         batch = [data for data in batch if data is not None]
-
         paths, imgs, bb_targets = list(zip(*batch))
-        
-        # Selects new image size every tenth batch
-        if self.multiscale and self.batch_count % 10 == 0:
-            self.img_size = random.choice(range(self.min_size, self.max_size + 1, 32))
-        
+
+    
         # Resize images to input shape
         imgs = torch.stack([resize(img, self.img_size) for img in imgs])
 
