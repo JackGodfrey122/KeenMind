@@ -35,11 +35,12 @@ class_names = config['class_names']
 img_size = config['img_size']
 num_classes = config['num_classes']
 num_workers = config['num_workers']
+loading_batch_size = config['loading_batch_size']
 
 # training parameters
 epochs = config['epochs']
+effective_batch_size = config['effective_batch_size']
 eval_interval = config['eval_interval']
-batch_size = config['batch_size']
 
 # NMS parameters
 iou_thres = config['iou_threshold']
@@ -62,7 +63,7 @@ val_dataset = ListDataset(val_path, img_size=img_size, transform=DEFAULT_TRANSFO
 
 train_dataloader = torch.utils.data.DataLoader(
     train_dataset,
-    batch_size=batch_size,
+    batch_size=loading_batch_size,
     shuffle=True,
     num_workers=num_workers,
     pin_memory=True,
@@ -72,7 +73,7 @@ train_dataloader = torch.utils.data.DataLoader(
 
 val_dataloader = torch.utils.data.DataLoader(
     val_dataset,
-    batch_size=batch_size,
+    batch_size=loading_batch_size,
     shuffle=True,
     num_workers=num_workers,
     pin_memory=True,
@@ -87,7 +88,7 @@ Tensor = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.FloatTen
 optimizer = torch.optim.Adam(model.parameters())
 device = "cuda"
 
-total_batches = len(train_dataset) // batch_size
+total_batches = len(train_dataset) // loading_batch_size
 logging.info('Total batches : {}'.format(total_batches))
 
 logging.info('Starting model training')
@@ -106,7 +107,7 @@ for epoch in range(epochs):
         outputs, loss, metrics = model(imgs, targets)
         loss.backward()
 
-        if batches_done % 64 == 0:
+        if batches_done % effective_batch_size == 0:
             optimizer.step()
             optimizer.zero_grad()
         
@@ -115,8 +116,8 @@ for epoch in range(epochs):
         wandb.log(metrics)
 
     # evaluating
-    logging.info('Evaluating after epoch {}'.format(epoch))
     if epoch % eval_interval == 0:
+        logging.info('Evaluating after epoch {}'.format(epoch))
 
         eval_metrics = evaluate(
             model,
@@ -125,7 +126,7 @@ for epoch in range(epochs):
             conf_thres,
             nms_thres,
             img_size,
-            batch_size)
+            loading_batch_size)
         
         if eval_metrics is not None:
             eval_ap_metrics = {}
@@ -141,5 +142,5 @@ for epoch in range(epochs):
             "validation/f1": f1.mean()
             })
 
-logging.info('Saving model to {}'.format(model_name))  
-torch.save(model, model_name)
+        logging.info('Saving model to {}'.format(model_name))  
+        torch.save(model, model_name)
