@@ -367,7 +367,7 @@ def get_batch_statistics(outputs, targets, iou_threshold):
 
             for pred_i, (pred_box, pred_label) in enumerate(zip(pred_boxes, pred_labels)):
 
-                # If targets are found break
+                # If all targets have been assigned a prediction, break
                 if len(detected_boxes) == len(annotations):
                     break
 
@@ -389,7 +389,7 @@ def get_batch_statistics(outputs, targets, iou_threshold):
     return batch_metrics
 
 
-def ap_per_class(tp, conf, pred_cls, target_cls):
+def ap_per_class(tp, conf, pred_cls, target_cls, possible_labels):
     """
     Compute the average precision, given the recall and precision curves.
     
@@ -415,12 +415,12 @@ def ap_per_class(tp, conf, pred_cls, target_cls):
     tp, conf, pred_cls = tp[i], conf[i], pred_cls[i]
 
     # Find unique classes
-    unique_classes = np.unique(target_cls)
+    unique_classes = np.array(possible_labels)
 
     # Create Precision-Recall curve and compute AP for each class
     ap, p, r = [], [], []
     for c in unique_classes:
-        i = pred_cls == c
+        i = pred_cls == c  # boolean array 
         n_gt = (target_cls == c).sum()  # Number of ground truth objects
         n_p = i.sum()  # Number of predicted objects
 
@@ -484,3 +484,13 @@ def compute_ap(recall, precision):
     # and sum (\Delta recall) * prec
     ap = np.sum((mrec[i + 1] - mrec[i]) * mpre[i + 1])
     return ap
+
+
+def unpack_metrics(p, r, AP, f1, class_names):
+    metrics = {}
+    for pc, rc, APc, f1c, class_name in zip(p, r, AP, f1, class_names):
+        metrics.update({'validation/{}_precision'.format(class_name): pc})
+        metrics.update({'validation/{}_recall'.format(class_name): rc})
+        metrics.update({'validation/{}_AP'.format(class_name): APc})
+        metrics.update({'validation/{}_f1-score'.format(class_name): f1c})
+    return metrics

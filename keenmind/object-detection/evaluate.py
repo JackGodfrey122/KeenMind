@@ -26,7 +26,7 @@ METRICS = [
     "conf_noobj",
 ]
 
-def evaluate(model, dataloader, iou_thres, conf_thres, nms_thres, img_size, batch_size):
+def evaluate(model, dataloader, iou_thres, conf_thres, nms_thres, img_size, batch_size, possible_labels):
     model.eval()
     Tensor = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.FloatTensor
 
@@ -58,6 +58,6 @@ def evaluate(model, dataloader, iou_thres, conf_thres, nms_thres, img_size, batc
     true_positives, pred_scores, pred_labels = [np.concatenate(x, 0) for x in list(zip(*sample_metrics))]
     
     # compute final metrics for entire validation set
-    precision, recall, AP, f1, ap_class = ap_per_class(true_positives, pred_scores, pred_labels, labels)
+    precision, recall, AP, f1, ap_class = ap_per_class(true_positives, pred_scores, pred_labels, labels, possible_labels)
 
     return precision, recall, AP, f1, ap_class

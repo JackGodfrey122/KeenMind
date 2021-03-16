@@ -8,11 +8,13 @@ import torch
 from torch.autograd import Variable
 from torch.utils.data.dataloader import DataLoader
 import wandb
+import numpy as np
 
 from model import YoloNetV3
 from transforms import DEFAULT_TRANSFORMS
 from data_loading import ListDataset
 from evaluate import evaluate, METRICS
+from utils import unpack_metrics
 
 
 logger = logging.getLogger(__name__)
@@ -20,8 +22,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s :: %(levelname)s :: 
 
 
 # load config
-# CONFIG_FILE = sys.argv[1]
-CONFIG_FILE = '/home/jack/keenmind/keenmind/object-detection/configs/config.yaml'
+CONFIG_FILE = sys.argv[1]
 with open(CONFIG_FILE, 'r') as stream:
     raw_config = yaml.safe_load(stream)
 config = {k: v['value'] for k, v in raw_config.items()}
@@ -36,6 +37,7 @@ img_size = config['img_size']
 num_classes = config['num_classes']
 num_workers = config['num_workers']
 loading_batch_size = config['loading_batch_size']
+possible_labels = [i for i in range(num_classes)]
 
 # training parameters
 epochs = config['epochs']
@@ -52,6 +54,17 @@ wandb_project = config['wandb_project']
 wandb_entity = config['wandb_entity']
 
 model_name = config['model_path'] + 'keenmind-od-' + str(datetime.now())
+
+try:
+    from_pretrained = config['from_pretrained']
+    model = torch.load(from_pretrained)
+    logger.info('Resuming training from {}'.format(from_pretrained))
+except KeyError:
+    logger.info('Building model from scratch')
+    model = YoloNetV3(num_classes, img_size)
+
+
+model.cuda()
 
 # initialise wandb
 run = wandb.init(project=wandb_project, entity=wandb_entity, config=config)
@@ -81,8 +94,6 @@ val_dataloader = torch.utils.data.DataLoader(
     )
 
 
-model = YoloNetV3(num_classes, img_size)
-model.cuda()
 
 Tensor = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.FloatTensor
 optimizer = torch.optim.Adam(model.parameters())
@@ -126,15 +137,19 @@ for epoch in range(epochs):
             conf_thres,
             nms_thres,
             img_size,
-            loading_batch_size)
+            loading_batch_size,
+            possible_labels
+        )
         
         if eval_metrics is not None:
-            eval_ap_metrics = {}
             precision, recall, AP, f1, ap_class = eval_metrics
-            for i, c in enumerate(ap_class):
-                name_key = 'validation/' + class_names[i] + '_AP'
-                eval_ap_metrics.update({name_key: ap_class})
-            wandb.log(eval_ap_metrics)
+            unpacked_metrics = unpack_metrics(
+                precision,
+                recall,
+                AP,
+                f1,
+                class_names)
+            wandb.log(unpacked_metrics)
             wandb.log({
             "validation/precision": precision.mean(),
             "validation/recall": recall.mean(),
