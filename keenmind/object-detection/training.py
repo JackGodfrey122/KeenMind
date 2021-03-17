@@ -53,7 +53,6 @@ nms_thres = config['nms_threshold']
 wandb_project = config['wandb_project']
 wandb_entity = config['wandb_entity']
 
-model_name = config['model_path'] + 'keenmind-od-' + str(datetime.now())
 
 try:
     from_pretrained = config['from_pretrained']
@@ -157,5 +156,6 @@ for epoch in range(epochs):
             "validation/f1": f1.mean()
             })
 
+        model_name = config['model_path'] + 'keenmind-od-' + str(datetime.now())
         logging.info('Saving model to {}'.format(model_name))  
         torch.save(model, model_name)
