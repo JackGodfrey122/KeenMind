@@ -156,6 +156,6 @@ for epoch in range(epochs):
             "validation/f1": f1.mean()
             })
 
-        model_name = config['model_path'] + 'keenmind-od-' + str(datetime.now())
+        model_name = config['model_path'] + '/keenmind-od-' + str(datetime.now())
         logging.info('Saving model to {}'.format(model_name))  
         torch.save(model, model_name)
