@@ -20,7 +20,7 @@ import random
 
 from data_loading import ImageFolder
 from transforms import DEFAULT_TRANSFORMS, Resize
-from utils import non_max_suppression, rescale_boxes
+from utils import non_max_suppression, rescale_boxes, parse_detections
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s :: %(levelname)s :: %(message)s')
@@ -77,6 +77,8 @@ for batch_i, (img_paths, input_imgs) in enumerate(dataloader):
     with torch.no_grad():
         detections = model(input_imgs)
         detections = non_max_suppression(detections, conf_thres, nms_thres)
+        detections = parse_detections(detections, class_names)
+
 
     # Log progress
     current_time = time.time()

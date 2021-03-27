@@ -3,16 +3,19 @@ import torch.nn.functional as F
 import numpy as np
 
 
-def parse_detections(detection, class_names):
-    output = {
-        "x1": int(detection[...,0].data),
-        "y1": int(detection[...,1].data),
-        "x2": int(detection[...,2].data),
-        "y2": int(detection[...,3].data),
-        "conf": float(detection[...,4]),
-        "class": class_names[int(detection[...,5].data)]
-    }
-    return output
+def parse_detections(detections, class_names):
+    outputs = {}
+    for i, detection in enumerate(detections):
+        output = {
+            "x1": int(detection[...,0].data),
+            "y1": int(detection[...,1].data),
+            "x2": int(detection[...,2].data),
+            "y2": int(detection[...,3].data),
+            "conf": float(detection[...,5]),
+            "class": class_names[int(detection[...,6].data)]
+        }
+        outputs.update({"detection_{}".format(i): output})
+    return outputs
 
 def resize(image, size):
     image = F.interpolate(image.unsqueeze(0), size=size, mode="nearest").squeeze(0)
