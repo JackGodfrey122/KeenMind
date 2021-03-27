@@ -77,7 +77,7 @@ for batch_i, (img_paths, input_imgs) in enumerate(dataloader):
     with torch.no_grad():
         detections = model(input_imgs)
         detections = non_max_suppression(detections, conf_thres, nms_thres)
-        detections = parse_detections(detections, class_names)
+        detections = parse_detections(*detections, class_names)
 
 
     # Log progress

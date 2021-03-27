@@ -59,7 +59,7 @@ def detect(img_file: UploadFile = File(...)):
     with torch.no_grad():
         detections = model(input_img)
         detections = non_max_suppression(detections, cf.settings.conf_thres, cf.settings.nms_thres)
-        detections = parse_detections(detections, cf.settings.class_names)
+        detections = parse_detections(*detections, cf.settings.class_names)
 
     # Log progress
     current_time = time.time()
