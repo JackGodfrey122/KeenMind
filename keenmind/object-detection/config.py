@@ -8,13 +8,13 @@ class Settings(BaseSettings):
     img_size: int = 416
     num_workers: int = 4
     loading_batch_size: int = 1
-    image_folder: str = "/home/jack/data/samples/"
+    image_folder: str = "/home/ec2-user/data/samples/"
 
     # NMS parameters
     conf_thres: float = 0.5
     nms_thres: float = 0.5
 
     # model parameters
-    model_path: str = "/home/jack/models/keenmind-od-2021-03-18 16:30:47.894673"
+    model_path: str = "/home/ec2-user/models/keenmind-od-2021-03-18 16:30:47.894673"
 
 settings = Settings()
