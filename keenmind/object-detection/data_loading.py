@@ -1,6 +1,7 @@
 import os
 import io
 import logging
+import glob
 
 import boto3
 from botocore.config import Config
@@ -17,6 +18,29 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 logger = logging.getLogger(__name__)
 
+class ImageFolder(Dataset):
+    def __init__(self, folder_path, transform=None):
+        self.files = sorted(glob.glob("%s/*.*" % folder_path))
+        self.transform = transform
+
+    def __getitem__(self, index):
+
+        img_path = self.files[index % len(self.files)]
+        img = np.array(
+            Image.open(img_path).convert('RGB'),
+            dtype=np.uint8)
+
+        # Label Placeholder
+        boxes = np.zeros((1, 5))
+
+        # Apply transforms
+        if self.transform:
+            img, _ = self.transform((img, boxes))
+
+        return img_path, img
+
+    def __len__(self):
+        return len(self.files)
 
 class ListDataset(Dataset):
     """
