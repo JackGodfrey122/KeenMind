@@ -34,7 +34,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s :: %(levelname)s :: 
 
 # load model
 model_path = cf.settings.model_path
-model = torch.load(model_path)
+model = torch.load(model_path, map_location=torch.device('cpu'))
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 logger.info('Using device: {}'.format(str(device)))
 

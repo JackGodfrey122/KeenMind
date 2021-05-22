@@ -1,0 +1,6 @@
+configs/
+wandb/
+README.md
+create_files.py
+Dockerfile
+.dockerignore
