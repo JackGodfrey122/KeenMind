@@ -20,7 +20,7 @@ import random
 
 from data_loading import ImageFolder
 from transforms import DEFAULT_TRANSFORMS, Resize
-from utils import non_max_suppression, rescale_boxes, parse_detections
+from utils import non_max_suppression, rescale_boxes
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s :: %(levelname)s :: %(message)s')
@@ -67,7 +67,7 @@ Tensor = torch.cuda.FloatTensor if torch.cuda.is_available() else torch.FloatTen
 imgs = []  # Stores image paths
 img_detections = []  # Stores detections for each image index
 
-logger.info("\nPerforming object detection:")
+logger.info("Performing object detection:")
 prev_time = time.time()
 for batch_i, (img_paths, input_imgs) in enumerate(dataloader):
     # Configure input
@@ -77,8 +77,6 @@ for batch_i, (img_paths, input_imgs) in enumerate(dataloader):
     with torch.no_grad():
         detections = model(input_imgs)
         detections = non_max_suppression(detections, conf_thres, nms_thres)
-        detections = parse_detections(*detections, class_names)
-
 
     # Log progress
     current_time = time.time()
